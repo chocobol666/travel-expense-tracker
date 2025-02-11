@@ -1,15 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Card, CardHeader, CardTitle, CardContent } from './ui/card';
+import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Settings, PlusCircle, Trash2 } from 'lucide-react';
 
 const ExpenseTracker = () => {
-  // 기본 상태 관리
-  const [expenses, setExpenses] = useState([]);
-  const [exchangeRate, setExchangeRate] = useState(100); // 1엔 = 100원
-  const [displayCurrency, setDisplayCurrency] = useState('KRW'); // KRW 또는 JPY
+  const [exchangeRate, setExchangeRate] = useState(100);
+  const [displayCurrency, setDisplayCurrency] = useState('KRW');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  
-  // 새 지출 입력을 위한 상태
+  const [expenses, setExpenses] = useState([]);
   const [newExpense, setNewExpense] = useState({
     date: new Date().toISOString().split('T')[0],
     payer: '석호',
@@ -18,22 +15,10 @@ const ExpenseTracker = () => {
     category: '식비',
     description: ''
   });
-  
-  const [settlements, setSettlements] = useState([]);
 
-  // 상수 정의
   const members = ['석호', '남섭', '승환', '도형'];
   const categories = ['식비', '숙박', '교통', '관광', '쇼핑', '기타'];
 
-  // 통화 변환 함수
-  const convertCurrency = (amount, fromCurrency, toCurrency) => {
-    if (fromCurrency === toCurrency) return amount;
-    if (fromCurrency === 'JPY' && toCurrency === 'KRW') return amount * exchangeRate;
-    if (fromCurrency === 'KRW' && toCurrency === 'JPY') return amount / exchangeRate;
-    return amount;
-  };
-
-  // 입력 처리 함수
   const handleInputChange = (e) => {
     const { name, value } = e.target;
     setNewExpense(prev => ({
@@ -42,17 +27,17 @@ const ExpenseTracker = () => {
     }));
   };
 
-  // 지출 추가 함수
   const handleAddExpense = () => {
     if (!newExpense.amount || !newExpense.description) return;
     
     const amount = parseInt(newExpense.amount.replace(/[^0-9]/g, ''), 10);
+    const amountKRW = newExpense.currency === 'JPY' ? amount * exchangeRate : amount;
     
     setExpenses(prev => [...prev, {
       ...newExpense,
       id: Date.now(),
-      amount: amount,
-      amountKRW: newExpense.currency === 'JPY' ? amount * exchangeRate : amount
+      amount,
+      amountKRW
     }]);
 
     setNewExpense(prev => ({
@@ -62,106 +47,66 @@ const ExpenseTracker = () => {
     }));
   };
 
-  // 금액 포맷팅 함수
-  const formatCurrency = (amount) => {
-    if (displayCurrency === 'JPY') {
-      amount = convertCurrency(amount, 'KRW', 'JPY');
-      return new Intl.NumberFormat('ja-JP', {
-        style: 'currency',
-        currency: 'JPY'
-      }).format(Math.round(amount));
+  const formatCurrency = (amount, currency = displayCurrency) => {
+    if (currency === 'JPY') {
+      const yenAmount = displayCurrency === 'JPY' ? 
+        (amount / exchangeRate) : amount;
+      return `¥${Math.round(yenAmount).toLocaleString()}`;
     }
-    return new Intl.NumberFormat('ko-KR', {
-      style: 'currency',
-      currency: 'KRW'
-    }).format(Math.round(amount));
+    return `₩${Math.round(amount).toLocaleString()}`;
   };
 
-  // 날짜 포맷팅 함수
-  const formatDate = (dateString) => {
-    return new Date(dateString).toLocaleDateString('ko-KR', {
-      month: 'long',
-      day: 'numeric',
-      weekday: 'short'
-    });
-  };
-
-  // 통계 계산 함수
-  const getTotalByPerson = () => {
+  const calculateTotalByPerson = () => {
     const totals = {};
     members.forEach(member => {
       totals[member] = expenses
-        .filter(expense => expense.payer === member)
-        .reduce((sum, expense) => sum + expense.amountKRW, 0);
+        .filter(exp => exp.payer === member)
+        .reduce((sum, exp) => sum + exp.amountKRW, 0);
     });
     return totals;
   };
 
-  const getTotalByCategory = () => {
-    const totals = {};
-    categories.forEach(category => {
-      totals[category] = expenses
-        .filter(expense => expense.category === category)
-        .reduce((sum, expense) => sum + expense.amountKRW, 0);
-    });
-    return totals;
-  };
-
-  // 정산 계산 함수
   const calculateSettlements = () => {
-    const totalByPerson = getTotalByPerson();
-    const total = Object.values(totalByPerson).reduce((sum, amount) => sum + amount, 0);
-    const perPerson = total / members.length;
+    const totalByPerson = calculateTotalByPerson();
+    const totalExpense = Object.values(totalByPerson).reduce((a, b) => a + b, 0);
+    const averagePerPerson = totalExpense / members.length;
+    
+    const settlements = [];
+    const balances = members.map(member => ({
+      name: member,
+      balance: averagePerPerson - totalByPerson[member]
+    }));
 
-    const balances = {};
-    members.forEach(member => {
-      balances[member] = perPerson - totalByPerson[member];
-    });
+    const payers = balances.filter(b => b.balance > 0).sort((a, b) => b.balance - a.balance);
+    const receivers = balances.filter(b => b.balance < 0).sort((a, b) => a.balance - b.balance);
 
-    const newSettlements = [];
-    const payers = Object.entries(balances)
-      .filter(([_, amount]) => amount > 0)
-      .sort((a, b) => b[1] - a[1]);
-    const receivers = Object.entries(balances)
-      .filter(([_, amount]) => amount < 0)
-      .sort((a, b) => a[1] - b[1]);
+    while (payers.length > 0 && receivers.length > 0) {
+      const payer = payers[0];
+      const receiver = receivers[0];
+      const amount = Math.min(payer.balance, -receiver.balance);
 
-    let payerIdx = 0;
-    let receiverIdx = 0;
+      settlements.push({
+        from: payer.name,
+        to: receiver.name,
+        amount
+      });
 
-    while (payerIdx < payers.length && receiverIdx < receivers.length) {
-      const [payer, payAmount] = payers[payerIdx];
-      const [receiver, receiveAmount] = receivers[receiverIdx];
-      const amount = Math.min(payAmount, -receiveAmount);
+      payer.balance -= amount;
+      receiver.balance += amount;
 
-      if (amount > 0) {
-        newSettlements.push({
-          from: payer,
-          to: receiver,
-          amount: Math.round(amount)
-        });
-      }
-
-      payers[payerIdx][1] -= amount;
-      receivers[receiverIdx][1] += amount;
-
-      if (payers[payerIdx][1] < 1) payerIdx++;
-      if (receivers[receiverIdx][1] > -1) receiverIdx++;
+      if (Math.abs(payer.balance) < 1) payers.shift();
+      if (Math.abs(receiver.balance) < 1) receivers.shift();
     }
 
-    setSettlements(newSettlements);
+    return settlements;
   };
-
-  useEffect(() => {
-    calculateSettlements();
-  }, [expenses, exchangeRate]);
 
   return (
     <Card className="w-full max-w-4xl mx-auto">
       <CardHeader>
         <div className="flex justify-between items-center">
           <CardTitle className="text-2xl font-bold">여행 경비 정산기</CardTitle>
-          <button
+          <button 
             onClick={() => setIsSettingsOpen(!isSettingsOpen)}
             className="p-2 hover:bg-gray-100 rounded-full"
           >
@@ -198,7 +143,7 @@ const ExpenseTracker = () => {
           </div>
         )}
       </CardHeader>
-      
+
       <CardContent className="space-y-6">
         {/* 새 지출 입력 폼 */}
         <div className="bg-gray-50 p-4 rounded-lg">
@@ -335,7 +280,7 @@ const ExpenseTracker = () => {
               <div className="bg-gray-50 p-4 rounded-lg">
                 <h3 className="font-semibold mb-3">인당 사용 금액</h3>
                 <div className="space-y-2">
-                  {Object.entries(getTotalByPerson()).map(([person, amount]) => (
+                  {Object.entries(calculateTotalByPerson()).map(([person, amount]) => (
                     <div key={person} className="flex justify-between">
                       <span>{person}</span>
                       <span className="font-medium">{formatCurrency(amount)}</span>
@@ -365,3 +310,30 @@ const ExpenseTracker = () => {
                     </span>
                   </div>
                 </div>
+              </div>
+            </div>
+
+            {/* 송금 내역 */}
+            <div className="bg-blue-50 p-4 rounded-lg">
+              <h3 className="font-semibold mb-4">정산 내역</h3>
+              <div className="space-y-2">
+                {calculateSettlements().map((settlement, index) => (
+                  <div key={index} className="flex items-center justify-between bg-white p-3 rounded">
+                    <span className="font-medium">{settlement.from}</span>
+                    <span className="mx-2">→</span>
+                    <span className="font-medium">{settlement.to}</span>
+                    <span className="ml-4 text-blue-600 font-semibold">
+                      {formatCurrency(settlement.amount)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+};
+
+export default ExpenseTracker;
